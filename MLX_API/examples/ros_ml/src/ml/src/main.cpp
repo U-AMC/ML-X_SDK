@@ -8,6 +8,9 @@
 typedef pcl::PointXYZRGB PointRGB_T;
 typedef pcl::PointCloud<PointRGB_T> PointCloud_T;
 
+typedef pcl::PointXYZI Point_T;
+typedef pcl::PointCloud<Point_T> PointCloud_IT;
+
 int nCols = 0;
 int nRows = 0;
 
@@ -24,7 +27,8 @@ static const unsigned short DEFAULT_IP_PORT_PC     = 0;
 static const char* DEFAULT_PACKAGE_NAME            = "ml";
 
 // Default publisher template
-static const char* DEFAULT_FRAME_ID = "map";
+static const char* DEFAULT_FRAME_ID = "ml_sensor";
+bool intensity_convert = true;  
 
 image_transport::Publisher pub_depth;
 image_transport::Publisher pub_intensity;
@@ -35,7 +39,10 @@ sensor_msgs::ImagePtr msg_ambient;
 sensor_msgs::ImagePtr msg_depth;
 sensor_msgs::ImagePtr msg_intensity;
 
-PointCloud_T::Ptr msg_pointcloud(new PointCloud_T);
+// if(!intensity_convert)
+    // PointCloud_T::Ptr msg_pointcloud(new PointCloud_T);
+// else
+PointCloud_IT::Ptr msg_pointcloud(new PointCloud_IT);
 
 int max_ambient_img_val = 30000;
 int max_depth_img_val = 10000;
@@ -130,30 +137,58 @@ void ml_scene_data_callback(void* arg, SOSLAB::LidarML::scene_t& scene)
     msg_pointcloud->height = height;
     msg_pointcloud->points.resize(pointcloud.size());
 
-    for (int col=0; col < width; col++) {
-        for (int row = 0; row < height; row++) {
-            int idx = col + (width * row);
+    /*if(!intensity_convert){
+        // RGB8 from intensity
+        for (int col=0; col < width; col++) {
+            for (int row = 0; row < height; row++) {
+                int idx = col + (width * row);
 
-            //unit : (m)
-            msg_pointcloud->points[idx].x = pointcloud[idx].x / 1000.0 ;
-            msg_pointcloud->points[idx].y = pointcloud[idx].y / 1000.0 ;
-            msg_pointcloud->points[idx].z = pointcloud[idx].z / 1000.0 ;
+                //unit : (m)
+                msg_pointcloud->points[idx].x = pointcloud[idx].x / 1000.0 ;
+                msg_pointcloud->points[idx].y = pointcloud[idx].y / 1000.0 ;
+                msg_pointcloud->points[idx].z = pointcloud[idx].z / 1000.0 ;
 
-            if(!scene.intensity_image.empty()){
-                msg_pointcloud->points[idx].r = (uint8_t)(intensity_image.at<cv::Vec3b>(row, col)[0]);
-                msg_pointcloud->points[idx].g = (uint8_t)(intensity_image.at<cv::Vec3b>(row, col)[1]);
-                msg_pointcloud->points[idx].b = (uint8_t)(intensity_image.at<cv::Vec3b>(row, col)[2]);
-            }
-            else{
-                msg_pointcloud->points[idx].r = 255;
-                msg_pointcloud->points[idx].g = 255;
-                msg_pointcloud->points[idx].b = 255;
+                if(!scene.intensity_image.empty()){
+                    msg_pointcloud->points[idx].r = (uint8_t)(intensity_image.at<cv::Vec3b>(row, col)[0]);
+                    msg_pointcloud->points[idx].g = (uint8_t)(intensity_image.at<cv::Vec3b>(row, col)[1]);
+                    msg_pointcloud->points[idx].b = (uint8_t)(intensity_image.at<cv::Vec3b>(row, col)[2]);
+                }
+                else{
+                    msg_pointcloud->points[idx].r = 255;
+                    msg_pointcloud->points[idx].g = 255;
+                    msg_pointcloud->points[idx].b = 255;
+                }
             }
         }
-    }
+    }*/
+    // else{
+        /* I array from intensity*/
+        for (int col=0; col < width; col++) {
+            for (int row = 0; row < height; row++) {
+                int idx = col + (width * row);
+
+                //unit : (m)
+                msg_pointcloud->points[idx].x = pointcloud[idx].x / 1000.0 ;
+                msg_pointcloud->points[idx].y = pointcloud[idx].y / 1000.0 ;
+                msg_pointcloud->points[idx].z = pointcloud[idx].z / 1000.0 ;
+                /*Lunma coding in vid system*/
+                /* Y' = 0.299R' + 0.587G' + 0.114B'*/
+                if(!scene.intensity_image.empty()){
+                    uint8_t R = (uint8_t)(intensity_image.at<cv::Vec3b>(row, col)[0]);
+                    uint8_t G = (uint8_t)(intensity_image.at<cv::Vec3b>(row, col)[1]);
+                    uint8_t B = (uint8_t)(intensity_image.at<cv::Vec3b>(row, col)[2]);
+                    msg_pointcloud->points[idx].intensity = -((0.299*R) + (0.587*G) + (0.114*B));
+                   }
+            }
+        }
+    // }
     // publish the pointcloud
-    pcl_conversions::toPCL(ros::Time::now(), msg_pointcloud->header.stamp);
-    pub_lidar.publish(msg_pointcloud);
+    // if(!intensity_convert){
+        // pcl_conversions::toPCL(ros::Time::now(), msg_pointcloud->header.stamp);
+        // pub_lidar.publish(msg_pointcloud);}
+    // else{
+        pcl_conversions::toPCL(ros::Time::now(), msg_pointcloud->header.stamp);
+        pub_lidar.publish(msg_pointcloud);
 }
 
 int main (int argc, char **argv)
@@ -172,6 +207,7 @@ int main (int argc, char **argv)
     bool ambient_enable                   = true;
     bool depth_enable                     = true;
     bool intensity_enable                 = true;
+    
 
     /* get parameters */
     ros::NodeHandle nh("~");
