@@ -2,14 +2,36 @@
 #include <sensor_msgs/image_encodings.h>
 #include <image_transport/image_transport.h>
 #include <cv_bridge/cv_bridge.h>
+//PCL lib
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
+#include <pcl_conversions/pcl_conversions.h>
 #include <pcl_ros/point_cloud.h>
+//ML lib
 #include "ml/libsoslab_ml.h"
 
 typedef pcl::PointXYZRGB PointRGB_T;
 typedef pcl::PointCloud<PointRGB_T> PointCloud_T;
 
+// typedef pcl::PointXYZI Point_T;
 typedef pcl::PointXYZI Point_T;
 typedef pcl::PointCloud<Point_T> PointCloud_IT;
+
+//struct for ML to Velodyne format
+struct MLPointXYZIRT {
+    PCL_ADD_POINT4D
+
+    PCL_ADD_INTENSITY;
+    uint16_t ring;
+    float time;
+
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+} EIGEN_ALIGN16;
+
+POINT_CLOUD_REGISTER_POINT_STRUCT (MLPointXYZIRT,
+                                   (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity)
+                                           (uint16_t, ring, ring)(float, time, time)
+)
 
 int nCols = 0;
 int nRows = 0;
@@ -32,16 +54,15 @@ bool intensity_convert = true;
 
 image_transport::Publisher pub_depth;
 image_transport::Publisher pub_intensity;
+image_transport::Publisher pub_intensity_mono;
 image_transport::Publisher pub_ambient;
 ros::Publisher pub_lidar;
 
 sensor_msgs::ImagePtr msg_ambient;
 sensor_msgs::ImagePtr msg_depth;
 sensor_msgs::ImagePtr msg_intensity;
+sensor_msgs::ImagePtr msg_intensity_mono;
 
-// if(!intensity_convert)
-    // PointCloud_T::Ptr msg_pointcloud(new PointCloud_T);
-// else
 PointCloud_IT::Ptr msg_pointcloud(new PointCloud_IT);
 
 int max_ambient_img_val = 30000;
@@ -72,6 +93,19 @@ cv::Mat colormap(cv::Mat image)
         }
     }
     return rgb_image;
+}
+
+template<typename T>
+bool has_nan(T point) {
+
+    // remove nan point, or the feature assocaion will crash, the surf point will containing nan points
+    // pcl remove nan not work normally
+    // ROS_ERROR("Containing nan point!");
+    if (pcl_isnan(point.x) || pcl_isnan(point.y) || pcl_isnan(point.z)) {
+        return true;
+    } else {
+        return false;
+    }
 }
 
 void ml_scene_data_callback(void* arg, SOSLAB::LidarML::scene_t& scene)
@@ -119,76 +153,79 @@ void ml_scene_data_callback(void* arg, SOSLAB::LidarML::scene_t& scene)
 
     /* Intensity Image */
     cv::Mat intensity_image;
+    cv::Mat intensity_gray;
     if(!scene.intensity_image.empty()){
         intensity = scene.intensity_image[0];
         cv::Mat intensity_image_raw(height, width, CV_16UC1, intensity.data());
         intensity_image_raw.convertTo(intensity_image, CV_8UC1, (255.0 / (max_intensity_img_val - 0)), 0);
         intensity_image = colormap(intensity_image);
+        cv::cvtColor(intensity_image, intensity_gray, cv::COLOR_RGB2GRAY);
 
         if (pub_intensity.getNumSubscribers() > 0) {
             msg_intensity = cv_bridge::CvImage(std_msgs::Header(), "rgb8", intensity_image).toImageMsg();
+            msg_intensity_mono = cv_bridge::CvImage(std_msgs::Header(), "mono8", intensity_gray).toImageMsg();
             pub_intensity.publish(msg_intensity);
+            pub_intensity_mono.publish(msg_intensity_mono);
         }
     }
 
     /* Point Cloud */
-    msg_pointcloud->header.frame_id = DEFAULT_FRAME_ID;
-    msg_pointcloud->width = width;
-    msg_pointcloud->height = height;
-    msg_pointcloud->points.resize(pointcloud.size());
+    // msg_pointcloud->header.frame_id = DEFAULT_FRAME_ID;
+    // msg_pointcloud->width = width;
+    // msg_pointcloud->height = height;
+    // msg_pointcloud->points.resize(pointcloud.size());
 
-    /*if(!intensity_convert){
-        // RGB8 from intensity
-        for (int col=0; col < width; col++) {
-            for (int row = 0; row < height; row++) {
-                int idx = col + (width * row);
-
-                //unit : (m)
-                msg_pointcloud->points[idx].x = pointcloud[idx].x / 1000.0 ;
-                msg_pointcloud->points[idx].y = pointcloud[idx].y / 1000.0 ;
-                msg_pointcloud->points[idx].z = pointcloud[idx].z / 1000.0 ;
-
-                if(!scene.intensity_image.empty()){
-                    msg_pointcloud->points[idx].r = (uint8_t)(intensity_image.at<cv::Vec3b>(row, col)[0]);
-                    msg_pointcloud->points[idx].g = (uint8_t)(intensity_image.at<cv::Vec3b>(row, col)[1]);
-                    msg_pointcloud->points[idx].b = (uint8_t)(intensity_image.at<cv::Vec3b>(row, col)[2]);
-                }
-                else{
-                    msg_pointcloud->points[idx].r = 255;
-                    msg_pointcloud->points[idx].g = 255;
-                    msg_pointcloud->points[idx].b = 255;
-                }
+    /* I array from intensity*/
+    //ML has 55 vertical lines -> 55 rings
+    pcl::PointCloud<MLPointXYZIRT>::Ptr ml_cvt(new pcl::PointCloud<MLPointXYZIRT>());
+    // pcl::PointCloud<MLPointXYZIRT> Point_Temp;
+    MLPointXYZIRT Point_Temp;
+    //point input intensity
+    for (int col=0; col < width; col++) {
+        int row_back=0;
+        for (int row = 0; row < height; row++) {
+            int idx = col + (width * row);
+            row_back = row;
+            //unit : (m)
+            Point_Temp.x = pointcloud[idx].x / 1000.0 ;
+            Point_Temp.y = pointcloud[idx].y / 1000.0 ;
+            Point_Temp.z = pointcloud[idx].z / 1000.0 ;
+            /*Lunma coding in vid system*/
+            /* Y' = 0.299R' + 0.587G' + 0.114B'*/
+            if(!scene.intensity_image.empty()){
+                Point_Temp.intensity = (-1)*intensity_gray.at<uchar>(row, col);
+                }//classice grayscale in case -((0.2126 *R) + (0.7152 *G) + (0.0722*B));
+            ml_cvt->points.push_back(Point_Temp);
+        }
+        //add ring
+        int valid_point_id = 0;
+        if(row_back == height-1){
+            for (int point_id = 0; point_id < ml_cvt->points.size(); ++point_id) {
+                if (has_nan(ml_cvt->points[point_id]))
+                    continue;
+                ml_cvt->points[valid_point_id++].ring = row_back;
             }
         }
-    }*/
-    // else{
-        /* I array from intensity*/
-        for (int col=0; col < width; col++) {
-            for (int row = 0; row < height; row++) {
-                int idx = col + (width * row);
+    }
+    //add time
+    int valid_point_id = 0;
+    float ssl_time = ros::Time::now().toSec();
+    for (int point_id = 0; point_id < ml_cvt->points.size(); ++point_id) {
+        if (has_nan(ml_cvt->points[point_id]))
+            continue;
+        ml_cvt->points[valid_point_id++].time = ssl_time;
+    }
 
-                //unit : (m)
-                msg_pointcloud->points[idx].x = pointcloud[idx].x / 1000.0 ;
-                msg_pointcloud->points[idx].y = pointcloud[idx].y / 1000.0 ;
-                msg_pointcloud->points[idx].z = pointcloud[idx].z / 1000.0 ;
-                /*Lunma coding in vid system*/
-                /* Y' = 0.299R' + 0.587G' + 0.114B'*/
-                if(!scene.intensity_image.empty()){
-                    uint8_t R = (uint8_t)(intensity_image.at<cv::Vec3b>(row, col)[0]);
-                    uint8_t G = (uint8_t)(intensity_image.at<cv::Vec3b>(row, col)[1]);
-                    uint8_t B = (uint8_t)(intensity_image.at<cv::Vec3b>(row, col)[2]);
-                    msg_pointcloud->points[idx].intensity = -((0.299*R) + (0.587*G) + (0.114*B));
-                   }
-            }
-        }
-    // }
-    // publish the pointcloud
-    // if(!intensity_convert){
-        // pcl_conversions::toPCL(ros::Time::now(), msg_pointcloud->header.stamp);
-        // pub_lidar.publish(msg_pointcloud);}
-    // else{
-        pcl_conversions::toPCL(ros::Time::now(), msg_pointcloud->header.stamp);
-        pub_lidar.publish(msg_pointcloud);
+    // pc properties
+    ml_cvt->is_dense = true;
+    // publish
+    sensor_msgs::PointCloud2 pc_new_msg;
+    pcl::toROSMsg(*ml_cvt, pc_new_msg);
+    pc_new_msg.header.stamp = ros::Time::now();
+    pc_new_msg.header.frame_id = DEFAULT_FRAME_ID;
+    // pcl_conversions::toPCL(ros::Time::now(), msg_pointcloud->header.stamp);
+    pub_lidar.publish(pc_new_msg);
+    // pubRobosensePC.publish(pc_new_msg);
 }
 
 int main (int argc, char **argv)
@@ -224,6 +261,7 @@ int main (int argc, char **argv)
 
     pub_depth = it.advertise("depth_color", 1);
     pub_intensity = it.advertise("intensity_color", 1);
+    pub_intensity_mono = it.advertise("intensity_mono", 1);
     pub_ambient = it.advertise("ambient_color", 1);
     pub_lidar = nh.advertise<PointCloud_T>("pointcloud", 10);
 
