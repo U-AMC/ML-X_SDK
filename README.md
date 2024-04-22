@@ -10,7 +10,7 @@ This is a **C++ Software Development Kit(SDK)** for connecting and using the **M
 # Update (custom)
 - Intensity image has been converted to mono8, and is projected to Pointcloud Array
 - sensor_msgs/pointcloud2 now comes in Velodyne VLP format, containing timestamp and ring information (vertical scan number)
-  # original update
+# original update
 - Release v2.3.0
 - Remove unnecessary code
 - Modify to allow changes to PC Gateway and Netmask
