@@ -181,9 +181,37 @@ void ml_scene_data_callback(void* arg, SOSLAB::LidarML::scene_t& scene)
     // pcl::PointCloud<MLPointXYZIRT> Point_Temp;
     MLPointXYZIRT Point_Temp;
     //point input intensity
-    for (int col=0; col < width; col++) {
+    // for (int col=0; col < width; col++) {
+    //     int row_back=0;
+    //     for (int row = 0; row < height; row++) {
+    //         int idx = col + (width * row);
+    //         row_back = row;
+    //         //unit : (m)
+    //         Point_Temp.x = pointcloud[idx].x / 1000.0 ;
+    //         Point_Temp.y = pointcloud[idx].y / 1000.0 ;
+    //         Point_Temp.z = pointcloud[idx].z / 1000.0 ;
+    //         /*Lunma coding in vid system*/
+    //         /* Y' = 0.299R' + 0.587G' + 0.114B'*/
+    //         if(!scene.intensity_image.empty()){
+    //             Point_Temp.intensity = (1)*intensity_gray.at<uchar>(row, col);
+    //             }//classice grayscale in case -((0.2126 *R) + (0.7152 *G) + (0.0722*B));
+    //         ml_cvt->points.push_back(Point_Temp);
+    //     }
+    //     //add ring
+    //     int valid_point_id = 0;
+    //     if(row_back == height-1){
+    //         for (int point_id = 0; point_id < ml_cvt->points.size(); ++point_id) {
+    //             if (has_nan(ml_cvt->points[point_id]))
+    //                 continue;
+    //             ml_cvt->points[valid_point_id++].ring = row_back;
+    //         }
+    //     }
+    // }
+    //new indexing
+        
+    for (int row = 0; row < height; row++) {
         int row_back=0;
-        for (int row = 0; row < height; row++) {
+        for (int col=0; col < width; col++){
             int idx = col + (width * row);
             row_back = row;
             //unit : (m)
@@ -193,7 +221,7 @@ void ml_scene_data_callback(void* arg, SOSLAB::LidarML::scene_t& scene)
             /*Lunma coding in vid system*/
             /* Y' = 0.299R' + 0.587G' + 0.114B'*/
             if(!scene.intensity_image.empty()){
-                Point_Temp.intensity = (-1)*intensity_gray.at<uchar>(row, col);
+                Point_Temp.intensity = (1)*intensity_gray.at<uchar>(row, col);
                 }//classice grayscale in case -((0.2126 *R) + (0.7152 *G) + (0.0722*B));
             ml_cvt->points.push_back(Point_Temp);
         }
@@ -223,9 +251,9 @@ void ml_scene_data_callback(void* arg, SOSLAB::LidarML::scene_t& scene)
     pcl::toROSMsg(*ml_cvt, pc_new_msg);
     pc_new_msg.header.stamp = ros::Time::now();
     pc_new_msg.header.frame_id = DEFAULT_FRAME_ID;
+    // legacy publish
     // pcl_conversions::toPCL(ros::Time::now(), msg_pointcloud->header.stamp);
     pub_lidar.publish(pc_new_msg);
-    // pubRobosensePC.publish(pc_new_msg);
 }
 
 int main (int argc, char **argv)
