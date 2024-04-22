@@ -2,7 +2,7 @@
 ---
 This is a **C++ Software Development Kit(SDK)** for connecting and using the **ML-X LiDAR developed by SOSLAB.**</br>
 </br>
-![SOS Studio Example](Etc/sos_studio_example.gif)</br>
+![SOS Studio Example](Etc/ml_edit)</br>
 
 ## Release Version
 - SDK v2.3.0
